@@ -160,6 +160,7 @@ class Handler(BaseHTTPRequestHandler):
         u=urllib.parse.urlparse(self.path); path=u.path
         if path=='/' or path=='/index.html': return self.send(200,(ROOT/'index.html').read_bytes(),'text/html; charset=utf-8')
         if path in ('/app.js','/style.css'): return self.send(200,(ROOT/path[1:]).read_bytes(),'text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
+        if path.startswith('/api/'): init_db()
         if path.startswith('/api/') and not self.api_access(): return
         if path=='/api/overview': return self.send(200,overview())
         if path=='/api/incidents': return self.send(200,{'items':incidents()})
@@ -183,6 +184,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.send(200,doc,'text/html; charset=utf-8')
     def do_POST(self):
         path=urllib.parse.urlparse(self.path).path
+        if path.startswith('/api/'): init_db()
         if path.startswith('/api/') and not self.api_access(): return
         if path=='/api/sample':
             with connect() as d: seed(d)
