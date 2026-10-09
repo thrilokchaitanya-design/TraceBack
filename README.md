@@ -1,6 +1,6 @@
 # TraceBack
 
-TraceBack is an offline-friendly, local network investigation workstation. It uses Python's standard library and SQLite so the sample workflow runs without installing packages. Demonstration events are synthetic and labeled as such. Imported data is stored locally in `traceback.db`.
+TraceBack is a network investigation workstation with an offline SQLite mode and a hosted PostgreSQL mode for Vercel. Demonstration events are synthetic and labeled as such. Local imports are stored in `traceback.db`; Vercel imports are stored in the connected PostgreSQL database.
 
 ## Run
 
@@ -14,7 +14,11 @@ Open <http://127.0.0.1:8765>. On first start, the application seeds a synthetic 
 
 ## Data and API
 
-SQLite is created in the project directory. Back it up by copying `traceback.db` while the server is stopped. APIs: `GET /api/overview`, `/api/incidents`, `/api/incidents/{id}`, `/api/incidents/{id}/graph`, `/api/events`, `/api/findings`, `/api/hosts`, `POST /api/upload` (multipart `file`), `POST /api/sample`, and `GET /api/reports/{id}` (HTML). API responses are JSON; static UI is served by the same process. Reports escape all imported text.
+SQLite is created in the project directory. Back it up by copying `traceback.db` while the server is stopped. APIs: `GET /api/overview`, `/api/incidents`, `/api/incidents/{id}`, `/api/incidents/{id}/graph`, `/api/events`, `/api/findings`, `/api/hosts`, `POST /api/upload` (multipart `file`), `POST /api/sample`, and `GET /api/incidents/{id}/report` (HTML). API responses are JSON; static UI is served by the same process. Reports escape all imported text.
+
+## Vercel deployment
+
+Connect this repository to Vercel and attach a hosted PostgreSQL database such as Neon. Set `DATABASE_URL` (or `POSTGRES_URL`) and a long random `TRACEBACK_ACCESS_KEY` in the Vercel project environment, then redeploy. The app requires both variables on Vercel and fails closed if either is missing; the access key protects API reads and writes. Enter the key in the workspace login screen. Production uploads are limited to 4 MB by Vercel's function request limit; local uploads remain capped at 10 MB. The local SQLite database is not migrated or uploaded by deployment.
 
 ## Limitations
 

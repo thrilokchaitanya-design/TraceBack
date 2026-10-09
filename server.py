@@ -1,4 +1,4 @@
-"""TraceBack local evidence server; standard library only."""
+"""TraceBack local evidence server and Vercel API, using SQLite or PostgreSQL."""
 from __future__ import annotations
 import csv, datetime as dt, html, io, json, os, re, sqlite3, urllib.parse, uuid
 from collections import Counter, defaultdict
@@ -10,9 +10,51 @@ ROOT = Path(__file__).resolve().parent
 DB = Path(os.environ.get('TRACEBACK_DB', ROOT / 'traceback.db'))
 MAX_UPLOAD = 10 * 1024 * 1024
 
+def database_url():
+    return os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_URL') or os.environ.get('POSTGRES_PRISMA_URL')
+
+class Row(dict):
+    """Mapping row that also preserves sqlite-style numeric indexing."""
+    def __getitem__(self, key):
+        if isinstance(key, int): return tuple(self.values())[key]
+        return super().__getitem__(key)
+
+class Cursor:
+    def __init__(self, cursor): self.cursor=cursor
+    def fetchone(self):
+        row=self.cursor.fetchone()
+        return Row(row) if row is not None and isinstance(row, dict) else row
+    def fetchall(self):
+        rows=self.cursor.fetchall()
+        return [Row(r) if isinstance(r,dict) else r for r in rows]
+    def __iter__(self): return iter(self.fetchall())
+
+class Postgres:
+    def __init__(self, conn): self.conn=conn
+    def execute(self, sql, args=()):
+        ignored='INSERT OR IGNORE INTO' in sql.upper()
+        sql=sql.replace('INSERT OR IGNORE INTO','INSERT INTO')
+        if ignored: sql += ' ON CONFLICT DO NOTHING'
+        sql=sql.replace('?', '%s')
+        return Cursor(self.conn.execute(sql, args))
+    def executescript(self, sql):
+        for statement in sql.split(';'):
+            if statement.strip(): self.execute(statement)
+    def commit(self): self.conn.commit()
+    def rollback(self): self.conn.rollback()
+    def close(self): self.conn.close()
+
 @contextmanager
 def connect():
-    db=sqlite3.connect(DB); db.row_factory=sqlite3.Row; db.execute('PRAGMA foreign_keys=ON')
+    url=database_url()
+    if os.environ.get('VERCEL') and not url:
+        raise RuntimeError('Deployment is missing a hosted PostgreSQL connection string.')
+    if url:
+        import psycopg
+        from psycopg.rows import dict_row
+        db=Postgres(psycopg.connect(url, row_factory=dict_row))
+    else:
+        db=sqlite3.connect(DB); db.row_factory=sqlite3.Row; db.execute('PRAGMA foreign_keys=ON')
     try:
         yield db
         db.commit()
@@ -96,7 +138,7 @@ def graph(inc):
     return {'nodes':list(nodes.values()),'edges':list(edges.values()),'event_count':len(ev)}
 def overview():
     its=incidents(); ev=events(); hosts={e['src_ip'] for e in ev}|{e['dst_ip'] for e in ev}
-    return {'incidents':len(its),'critical_high':sum(i['severity'] in ('critical','high') for i in its),'hosts':len(hosts),'events':len(ev),'recent':its[:5],'demo':True}
+    return {'incidents':len(its),'critical_high':sum(i['severity'] in ('critical','high') for i in its),'hosts':len(hosts),'events':len(ev),'recent':its[:5],'demo':True,'storage':'PostgreSQL' if database_url() else 'SQLite'}
 
 class Handler(BaseHTTPRequestHandler):
     server_version='TraceBack/0.1'
@@ -104,10 +146,21 @@ class Handler(BaseHTTPRequestHandler):
     def send(self,code,data,ctype='application/json; charset=utf-8'):
         raw=data if isinstance(data,bytes) else (json.dumps(data,ensure_ascii=False).encode() if ctype.startswith('application/json') else str(data).encode())
         self.send_response(code);self.send_header('Content-Type',ctype);self.send_header('Content-Length',str(len(raw)));self.send_header('X-Content-Type-Options','nosniff');self.send_header('Content-Security-Policy',"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:");self.end_headers();self.wfile.write(raw)
+    def api_access(self):
+        key=os.environ.get('TRACEBACK_ACCESS_KEY')
+        if not key:
+            if os.environ.get('VERCEL'):
+                self.send(503,{'error':'Deployment is missing TRACEBACK_ACCESS_KEY.'});return False
+            return True
+        supplied=self.headers.get('Authorization','')
+        import hmac
+        if hmac.compare_digest(supplied, 'Bearer '+key): return True
+        self.send(401,{'error':'Enter the workspace access key to continue.'});return False
     def do_GET(self):
         u=urllib.parse.urlparse(self.path); path=u.path
         if path=='/' or path=='/index.html': return self.send(200,(ROOT/'index.html').read_bytes(),'text/html; charset=utf-8')
         if path in ('/app.js','/style.css'): return self.send(200,(ROOT/path[1:]).read_bytes(),'text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
+        if path.startswith('/api/') and not self.api_access(): return
         if path=='/api/overview': return self.send(200,overview())
         if path=='/api/incidents': return self.send(200,{'items':incidents()})
         if path=='/api/events':
@@ -130,12 +183,14 @@ class Handler(BaseHTTPRequestHandler):
         return self.send(200,doc,'text/html; charset=utf-8')
     def do_POST(self):
         path=urllib.parse.urlparse(self.path).path
+        if path.startswith('/api/') and not self.api_access(): return
         if path=='/api/sample':
             with connect() as d: seed(d)
             return self.send(200,overview())
         if path!='/api/upload': return self.send(404,{'error':'Not found'})
         length=int(self.headers.get('Content-Length','0'))
-        if length<=0 or length>MAX_UPLOAD: return self.send(413,{'error':'Upload must be between 1 byte and 10 MB'})
+        max_upload=4*1024*1024 if os.environ.get('VERCEL') else MAX_UPLOAD
+        if length<=0 or length>max_upload: return self.send(413,{'error':f'Upload must be between 1 byte and {max_upload//(1024*1024)} MB'})
         body=self.rfile.read(length); boundary=re.search(r'boundary=(?:"([^"]+)"|([^;]+))',self.headers.get('Content-Type',''))
         if not boundary:return self.send(400,{'error':'Expected multipart form field named file'})
         b=(boundary[1] or boundary[2]).encode(); parts=body.split(b'--'+b); payload=None; filename='upload'
