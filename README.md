@@ -18,7 +18,7 @@ SQLite is created in the project directory. Back it up by copying `traceback.db`
 
 ## Vercel deployment
 
-Connect this repository to Vercel and attach a hosted PostgreSQL database such as Neon. Set `DATABASE_URL` (or `POSTGRES_URL`) and a long random `TRACEBACK_ACCESS_KEY` in the Vercel project environment, then redeploy. The app requires both variables on Vercel and fails closed if either is missing; the access key protects API reads and writes. Enter the key in the workspace login screen. Production uploads are limited to 4 MB by Vercel's function request limit; local uploads remain capped at 10 MB. The local SQLite database is not migrated or uploaded by deployment.
+Connect this repository to Vercel and attach a hosted PostgreSQL database such as Neon. Set `DATABASE_URL` (or `POSTGRES_URL`) in the Vercel project environment, then deploy. The public app has no sign-in: anyone can view, import, and change records in the shared hosted database. Do not upload private or sensitive evidence. Production uploads are limited to 4 MB by Vercel's function request limit; local uploads remain capped at 10 MB. The local SQLite database is not migrated or uploaded by deployment.
 
 ## Limitations
 

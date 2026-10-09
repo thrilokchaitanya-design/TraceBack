@@ -146,22 +146,11 @@ class Handler(BaseHTTPRequestHandler):
     def send(self,code,data,ctype='application/json; charset=utf-8'):
         raw=data if isinstance(data,bytes) else (json.dumps(data,ensure_ascii=False).encode() if ctype.startswith('application/json') else str(data).encode())
         self.send_response(code);self.send_header('Content-Type',ctype);self.send_header('Content-Length',str(len(raw)));self.send_header('X-Content-Type-Options','nosniff');self.send_header('Content-Security-Policy',"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:");self.end_headers();self.wfile.write(raw)
-    def api_access(self):
-        key=os.environ.get('TRACEBACK_ACCESS_KEY')
-        if not key:
-            if os.environ.get('VERCEL'):
-                self.send(503,{'error':'Deployment is missing TRACEBACK_ACCESS_KEY.'});return False
-            return True
-        supplied=self.headers.get('Authorization','')
-        import hmac
-        if hmac.compare_digest(supplied, 'Bearer '+key): return True
-        self.send(401,{'error':'Enter the workspace access key to continue.'});return False
     def do_GET(self):
         u=urllib.parse.urlparse(self.path); path=u.path
         if path=='/' or path=='/index.html': return self.send(200,(ROOT/'index.html').read_bytes(),'text/html; charset=utf-8')
         if path in ('/app.js','/style.css'): return self.send(200,(ROOT/path[1:]).read_bytes(),'text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
         if path.startswith('/api/'): init_db()
-        if path.startswith('/api/') and not self.api_access(): return
         if path=='/api/overview': return self.send(200,overview())
         if path=='/api/incidents': return self.send(200,{'items':incidents()})
         if path=='/api/events':
@@ -185,7 +174,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path=urllib.parse.urlparse(self.path).path
         if path.startswith('/api/'): init_db()
-        if path.startswith('/api/') and not self.api_access(): return
         if path=='/api/sample':
             with connect() as d: seed(d)
             return self.send(200,overview())
