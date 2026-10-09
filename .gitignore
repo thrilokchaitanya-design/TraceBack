@@ -11,3 +11,4 @@ server.log
 server-error.log
 *.test.db
 .test-*.db
+vercel-package/
